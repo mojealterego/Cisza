@@ -1,0 +1,51 @@
+name: One-time CISZA source import
+'on':
+  push:
+    branches: [main]
+    paths: ['.github/workflows/import-full-source.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: cisza-source-import-main
+  cancel-in-progress: false
+jobs:
+  import:
+    if: github.repository == 'mojealterego/Cisza' && github.ref == 'refs/heads/main' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Import pinned source tree
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          git clone --no-tags --single-branch --branch main https://github.com/mojealterego/Cisza.git "$work/repo"
+          cd "$work/repo"
+          base=$(git rev-parse HEAD)
+          [[ "$base" == "$EVENT_SHA" ]] || { echo 'main advanced; refusing stale import' >&2; exit 1; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config core.autocrlf false
+          git config core.hooksPath /dev/null
+          bash scripts/import-full-source.sh --upstream
+          [[ $(git rev-parse HEAD:project) == 3fcc4366b76dd377d91228b97e21a187570b276e ]]
+          [[ $(git ls-tree -r HEAD:project | wc -l) == 3854 ]]
+          if [[ $(git rev-parse HEAD) == "$base" ]]; then
+            echo 'Already imported; nothing to push.'
+            exit 0
+          fi
+          [[ $(git rev-parse HEAD^1) == "$base" ]]
+          [[ $(git ls-remote --exit-code origin refs/heads/main | cut -f1) == "$base" ]]
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          unset GH_TOKEN
+          git -c "http.extraHeader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/main
+          unset auth
+          [[ $(git ls-remote --exit-code origin refs/heads/main | cut -f1) == "$(git rev-parse HEAD)" ]]
+          printf 'Published verified full source: %s\n' "$(git rev-parse HEAD)"
