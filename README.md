@@ -1,40 +1,29 @@
 # CISZA Ω — Secure Messenger v0.1.0
 
-Nieoficjalny fork **SimpleX Chat 7.0.2**, Android application ID `pl.omega.cisza`. Repozytorium jest publiczne i rozwijane wyłącznie na gałęzi `main`.
+Nieoficjalny fork SimpleX Chat 7.0.2, Android package `pl.omega.cisza`. Gałąź: main. Licencja [GNU AGPL-3.0](LICENSE).
 
-## Co już opublikowano na GitHub
+## Kod i pełny import
 
-- [Pakiet zmian CISZA Ω](source/CISZA_OMEGA_v0.1.0_PATCH.zip) — oryginalne archiwum poprawek (529 599 bajtów; SHA-256: `365b34b53cadc861e98cb0d579a4ab87c5224f8e377a02fd47730f4929d323bb`).
-- [Skrypt odtwarzania pełnego źródła](scripts/restore_cisza.py) — ekstrakcja z kontrolą integralności SHA-256, odrzucaniem niebezpiecznych wpisów ZIP i bez nadpisywania katalogu.
-- [Testy odtwarzania](tests/test_restore.py) — przypadki poprawnego odtworzenia, błędnej sumy SHA-256, traversal i ochrony danych.
-- [Stan źródeł i testów](docs/SOURCE_STATUS.md).
+- [overlay/](overlay/) — 69 oryginalnych plików pakietu modyfikacji.
+- [source/](source/) — oryginalny pakiet ZIP poprawek.
+- [Instrukcja pełnego importu](docs/FULL_SOURCE_MIGRATION.md).
+- [Stan źródeł](docs/SOURCE_STATUS.md) — wcześniejszy raport.
+- [Skrypt importu](scripts/import-full-source.sh) i [test](tests/test_import.sh).
 
-**Ważne:** ten stan repozytorium *nie zawiera jeszcze całego* ponad 200-megabajtowego rozpakowanego drzewa kodu. Pakiet zmian nie jest samodzielnym projektem Android.
+Pełne drzewo zostało odtworzone lokalnie i zweryfikowane (3854 pozycje, SHA drzewa Git `3fcc4366b76dd377d91228b97e21a187570b276e`). Na GitHubie opublikowano overlay i mechanizm importu; **pełny katalog project/ nie jest jeszcze opublikowany**.
 
-## Jak odtworzyć pełną kopię
-
-Pobierz osobno `CISZA_OMEGA_v0.1.0_FULL_SOURCE.zip` z pakietu dostarczonego w konwersacji. Oczekiwana suma kontrolna:
-
-```text
-3b65013dc9c80f7b6df0df29a06ebb5f222bd7cf1d5bd07a60f06ce5a55d2a85
-```
+Aby dokończyć import z przypiętego upstream w uwierzytelnionym Git:
 
 ```bash
-git clone https://github.com/mojealterego/Cisza.git
+git clone --single-branch --branch main https://github.com/mojealterego/Cisza.git
 cd Cisza
-python3 -m unittest discover -s tests -v
-python3 scripts/restore_cisza.py \
-  /sciezka/CISZA_OMEGA_v0.1.0_FULL_SOURCE.zip \
-  ./CISZA-OMEGA-v0.1.0
-cd CISZA-OMEGA-v0.1.0
-bash scripts/test-cisza-guard.sh
-python3 scripts/verify-cisza-source.py
+bash scripts/import-full-source.sh --upstream --push
 ```
 
-Skrypt nie wymaga GitHub Actions. Testy lokalne: **16/16 testów polityki PIN**, **5/5 testów odtwarzania** i **2917/2917 kluczy PL** — PASS. Pełna kompilacja APK, natywne biblioteki Haskell, testy sprzętowe i podpisanie wydania **nie zostały potwierdzone**.
+Import nie wymaga GitHub Actions, nie tworzy nowych gałęzi, nie stosuje force push. Alternatywnie obsługuje zweryfikowany lokalny Git bundle. Przed commitem weryfikuje dokładny SHA drzewa.
 
-## Ostrzeżenia i licencja
+## Weryfikacja
 
-Zabezpieczenie trzech błędnych prób PIN jest domyślnie wyłączone. Po świadomym włączeniu może spowodować nieodwracalną utratę danych prywatnych aplikacji. Nie testować na profilu produkcyjnym. Zmiana application ID oznacza osobną instalację, nie aktualizację oficjalnego SimpleX Chat.
+16/16 testów polityki PIN, 2917/2917 kluczy PL, kontrola typów Kotlin na testowych atrapach Android API, lokalny import Git bundle i porównanie 3854 pozycji: PASS. Pełna kompilacja APK, testy na urządzeniach oraz niezależny audyt kryptograficzny: niepotwierdzone.
 
-**Licencja kodu bazowego: GNU AGPL-3.0.** Zachować dokument `LICENSE` i informacje o prawach autorskich w pełnym drzewie źródeł. Projekt CISZA Ω nie jest oficjalnym produktem SimpleX.
+Opcja usunięcia danych po trzech błędnych PIN jest domyślnie wyłączona; może spowodować nieodwracalną utratę danych. Testować wyłącznie na profilu testowym. Projekt jest niezależnym forkiem i nie stanowi oficjalnego wydania SimpleX.
