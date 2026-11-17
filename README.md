@@ -27,3 +27,7 @@ Import nie wymaga GitHub Actions, nie tworzy nowych gałęzi, nie stosuje force 
 16/16 testów polityki PIN, 2917/2917 kluczy PL, kontrola typów Kotlin na testowych atrapach Android API, lokalny import Git bundle i porównanie 3854 pozycji: PASS. Pełna kompilacja APK, testy na urządzeniach oraz niezależny audyt kryptograficzny: niepotwierdzone.
 
 Opcja usunięcia danych po trzech błędnych PIN jest domyślnie wyłączona; może spowodować nieodwracalną utratę danych. Testować wyłącznie na profilu testowym. Projekt jest niezależnym forkiem i nie stanowi oficjalnego wydania SimpleX.
+
+## Dowód kompletności i stan transportu
+
+[Manifest wszystkich 3854 pozycji](docs/source-tree.tsv) pozwala niezależnie sprawdzić integralność plików. [Raport weryfikacji i próby transportu](docs/MIGRATION_EVIDENCE.md): lokalny bundle PASS, GitHub Actions #44017354165 zakończone błędem przed pierwszym krokiem. Pełny import nadal nie jest ukończony.

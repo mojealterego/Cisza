@@ -1,8 +1,5 @@
 name: One-time CISZA source import
 'on':
-  push:
-    branches: [main]
-    paths: ['.github/workflows/import-full-source.yml']
   workflow_dispatch:
 permissions:
   contents: write
