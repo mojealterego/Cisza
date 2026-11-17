@@ -1,0 +1,711 @@
+--- a/apps/multiplatform/android/build.gradle.kts
++++ b/apps/multiplatform/android/build.gradle.kts
+@@ -12,7 +12,7 @@
+     compileSdk = 35
+ 
+     defaultConfig {
+-        applicationId = "chat.simplex.app"
++        applicationId = "pl.omega.cisza"
+         namespace = "chat.simplex.app"
+         minSdk = 26
+         targetSdk = 35
+@@ -31,7 +31,7 @@
+             }
+         }
+         manifestPlaceholders["app_name"] = "@string/app_name"
+-        manifestPlaceholders["provider_authorities"] = "chat.simplex.app.provider"
++        manifestPlaceholders["provider_authorities"] = "pl.omega.cisza.provider"
+         manifestPlaceholders["extract_native_libs"] = rootProject.extra["compression.level"] as Int != 0
+     }
+ 
+@@ -56,7 +56,7 @@
+             isDebuggable = rootProject.extra["enable_debuggable"] as Boolean
+             manifestPlaceholders["app_name"] = rootProject.extra["app.name"] as String
+             // Provider can"t be the same for different apps on the same device
+-            manifestPlaceholders["provider_authorities"] = "chat.simplex.app${rootProject.extra["application_id.suffix"]}.provider"
++            manifestPlaceholders["provider_authorities"] = "pl.omega.cisza${rootProject.extra["application_id.suffix"]}.provider"
+         }
+         release {
+             isMinifyEnabled = false
+--- a/apps/multiplatform/android/src/main/AndroidManifest.xml
++++ b/apps/multiplatform/android/src/main/AndroidManifest.xml
+@@ -38,6 +38,7 @@
+   <application
+       android:name="SimplexApp"
+       android:allowBackup="false"
++      android:hasFragileUserData="false"
+       android:fullBackupOnly="false"
+       android:icon="@mipmap/icon"
+       android:label="${app_name}"
+--- a/apps/multiplatform/android/src/main/res/values/icon_background.xml
++++ b/apps/multiplatform/android/src/main/res/values/icon_background.xml
+@@ -1,4 +1,4 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <color name="icon_background">#FFFFFF</color>
++    <color name="icon_background">#07080A</color>
+ </resources>--- a/apps/multiplatform/common/src/androidMain/kotlin/chat/simplex/common/views/usersettings/PrivacySettings.android.kt
++++ b/apps/multiplatform/common/src/androidMain/kotlin/chat/simplex/common/views/usersettings/PrivacySettings.android.kt
+@@ -1,11 +1,20 @@
+ package chat.simplex.common.views.usersettings
+ 
++import SectionTextFooter
+ import SectionView
+ import android.view.WindowManager
+-import androidx.compose.runtime.Composable
++import androidx.compose.material.AlertDialog
++import androidx.compose.material.Text
++import androidx.compose.material.TextButton
++import androidx.compose.runtime.*
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.fragment.app.FragmentActivity
+ import chat.simplex.common.model.ChatModel
++import chat.simplex.common.security.CiszaGuard
++import chat.simplex.common.views.helpers.DefaultSwitch
++import chat.simplex.common.views.helpers.LAResult
++import chat.simplex.common.views.helpers.authenticate
++import chat.simplex.common.views.helpers.generalGetString
+ import chat.simplex.res.MR
+ import dev.icerock.moko.resources.compose.painterResource
+ import dev.icerock.moko.resources.compose.stringResource
+@@ -15,18 +24,75 @@
+   showSettingsModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
+   setPerformLA: (Boolean) -> Unit,
+ ) {
+-  SectionView(stringResource(MR.strings.settings_section_title_device)) {
+-    ChatLockItem(showSettingsModal, setPerformLA)
+-    val context = LocalContext.current
+-    SettingsPreferenceItem(painterResource(MR.images.ic_visibility_off), stringResource(MR.strings.protect_app_screen), ChatModel.controller.appPrefs.privacyProtectScreen) { on ->
+-      if (on) {
+-        (context as? FragmentActivity)?.window?.setFlags(
+-          WindowManager.LayoutParams.FLAG_SECURE,
+-          WindowManager.LayoutParams.FLAG_SECURE
+-        )
+-      } else {
+-        (context as? FragmentActivity)?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
++  val context = LocalContext.current.applicationContext
++  var guardStatus by remember { mutableStateOf(CiszaGuard.status(context)) }
++  var confirmArm by remember { mutableStateOf(false) }
++  val lockPrefs = ChatModel.controller.appPrefs
++  val canArm = lockPrefs.performLA.state.value && lockPrefs.laMode.state.value == LAMode.PASSCODE
++
++  fun authorizeThen(change: () -> Boolean) {
++    authenticate(
++      promptTitle = generalGetString(MR.strings.cisza_guard_auth_title),
++      promptSubtitle = "",
++      selfDestruct = false,
++      usingLAMode = LAMode.PASSCODE,
++      oneTime = true
++    ) { result ->
++      if (result == LAResult.Success) {
++        change()
++        guardStatus = CiszaGuard.status(context)
+       }
+     }
+   }
++
++  SectionView(stringResource(MR.strings.settings_section_title_device)) {
++    ChatLockItem(showSettingsModal, setPerformLA)
++    SettingsPreferenceItem(painterResource(MR.images.ic_visibility_off), stringResource(MR.strings.protect_app_screen), lockPrefs.privacyProtectScreen) { on ->
++      val activity = chat.simplex.common.platform.mainActivity.get() as? FragmentActivity
++      if (on) {
++        activity?.window?.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
++      } else {
++        activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
++      }
++    }
++
++    SettingsActionItemWithContent(painterResource(MR.images.ic_security), stringResource(MR.strings.cisza_guard_title)) {
++      DefaultSwitch(
++        checked = guardStatus == CiszaGuard.Status.ARMED,
++        onCheckedChange = { requested ->
++          if (guardStatus == CiszaGuard.Status.LOCKED) return@DefaultSwitch
++          if (requested) {
++            if (canArm) confirmArm = true
++          } else {
++            authorizeThen { CiszaGuard.disable(context) }
++          }
++        }
++      )
++    }
++  }
++
++  SectionTextFooter(
++    when {
++      guardStatus == CiszaGuard.Status.LOCKED -> stringResource(MR.strings.cisza_guard_locked)
++      !canArm -> stringResource(MR.strings.cisza_guard_require_pin)
++      else -> stringResource(MR.strings.cisza_guard_description)
++    }
++  )
++
++  if (confirmArm) {
++    AlertDialog(
++      onDismissRequest = { confirmArm = false },
++      title = { Text(stringResource(MR.strings.cisza_guard_confirm_title)) },
++      text = { Text(stringResource(MR.strings.cisza_guard_confirm_body)) },
++      confirmButton = {
++        TextButton(onClick = {
++          confirmArm = false
++          if (canArm) authorizeThen { CiszaGuard.enable(context) }
++        }) { Text(stringResource(MR.strings.cisza_guard_confirm_button)) }
++      },
++      dismissButton = {
++        TextButton(onClick = { confirmArm = false }) { Text(stringResource(MR.strings.cancel_verb)) }
++      }
++    )
++  }
+ }
+--- a/apps/multiplatform/common/src/commonMain/cpp/android/CMakeLists.txt
++++ b/apps/multiplatform/common/src/commonMain/cpp/android/CMakeLists.txt
+@@ -55,6 +55,11 @@
+ 
+ target_compile_options(app-lib PRIVATE
+     -g0
++    -fstack-protector-strong
++    -fPIC
++    -Wformat
++    -Wformat-security
++    -D_FORTIFY_SOURCE=2
+ )
+ 
+ # Specifies libraries CMake should link to your target library. You
+@@ -65,6 +70,8 @@
+ target_link_options(app-lib PRIVATE
+     "-Wl,-z,max-page-size=16384"
+     "-Wl,--build-id=none"
++    "-Wl,-z,relro"
++    "-Wl,-z,now"
+ )
+ 
+ target_link_libraries( # Specifies the target library.
+--- a/apps/multiplatform/common/src/commonMain/kotlin/chat/simplex/common/model/SimpleXAPI.kt
++++ b/apps/multiplatform/common/src/commonMain/kotlin/chat/simplex/common/model/SimpleXAPI.kt
+@@ -194,7 +194,7 @@
+   val addressCreationCardShown = mkBoolPreference(SHARED_PREFS_ADDRESS_CREATION_CARD_SHOWN, false)
+   val showMuteProfileAlert = mkBoolPreference(SHARED_PREFS_SHOW_MUTE_PROFILE_ALERT, true)
+   val showReportsInSupportChatAlert = mkBoolPreference(SHARED_PREFS_SHOW_REPORTS_IN_SUPPORT_CHAT_ALERT, true)
+-  val appLanguage = mkStrPreference(SHARED_PREFS_APP_LANGUAGE, null)
++  val appLanguage = mkStrPreference(SHARED_PREFS_APP_LANGUAGE, "pl")
+   val appUpdateChannel = mkEnumPreference(SHARED_PREFS_APP_UPDATE_CHANNEL, AppUpdatesChannel.DISABLED) { AppUpdatesChannel.entries.firstOrNull { it.name == this } }
+   val appSkippedUpdate = mkStrPreference(SHARED_PREFS_APP_SKIPPED_UPDATE, "")
+   val appUpdateNoticeShown = mkBoolPreference(SHARED_PREFS_APP_UPDATE_NOTICE_SHOWN, false)
+--- a/apps/multiplatform/common/src/commonMain/kotlin/chat/simplex/common/views/localauth/LocalAuthView.kt
++++ b/apps/multiplatform/common/src/commonMain/kotlin/chat/simplex/common/views/localauth/LocalAuthView.kt
+@@ -3,6 +3,8 @@
+ import androidx.compose.runtime.*
+ import androidx.compose.runtime.saveable.rememberSaveable
+ import chat.simplex.common.model.*
++import chat.simplex.common.security.CiszaGuardResult
++import chat.simplex.common.security.ciszaGuardAuthenticate
+ import chat.simplex.common.model.ChatModel.controller
+ import dev.icerock.moko.resources.compose.stringResource
+ import chat.simplex.common.views.helpers.*
+@@ -32,15 +34,23 @@
+           authRequest.completed(r)
+         }
+       } else {
+-        val r: LAResult = if (passcode.value == authRequest.password) {
+-          if (authRequest.selfDestruct && sdPassword != null && controller.getChatCtrl() == -1L) {
+-            initChatControllerOnStart()
++        // The third PIN is checked before any erase decision. Only an explicitly armed
++        // Android guard can request removal of this application's private data.
++        val result = ciszaGuardAuthenticate { passcode.value == authRequest.password }
++        when (result) {
++          CiszaGuardResult.VERIFIED -> {
++            if (authRequest.selfDestruct && sdPassword != null && controller.getChatCtrl() == -1L) {
++              initChatControllerOnStart()
++            }
++            authRequest.completed(LAResult.Success)
+           }
+-          LAResult.Success
+-        } else {
+-          LAResult.Error(generalGetString(MR.strings.incorrect_passcode))
++          CiszaGuardResult.INVALID -> authRequest.completed(LAResult.Error(generalGetString(MR.strings.incorrect_passcode)))
++          CiszaGuardResult.LOCKED -> authRequest.completed(LAResult.Error(generalGetString(MR.strings.cisza_guard_locked)))
++          CiszaGuardResult.ERASE_REQUESTED -> {
++            allowToReact.value = false
++            authRequest.completed(LAResult.Error(generalGetString(MR.strings.cisza_guard_erase_requested)))
++          }
+         }
+-        authRequest.completed(r)
+       }
+     },
+     cancel = {
+--- a/apps/multiplatform/common/src/commonMain/kotlin/chat/simplex/common/views/usersettings/PrivacySettings.kt
++++ b/apps/multiplatform/common/src/commonMain/kotlin/chat/simplex/common/views/usersettings/PrivacySettings.kt
+@@ -26,6 +26,7 @@
+ import chat.simplex.common.ui.theme.*
+ import chat.simplex.common.views.ProfileNameField
+ import chat.simplex.common.views.helpers.*
++import chat.simplex.common.security.ciszaGuardDisarmOnLockChange
+ import chat.simplex.common.views.helpers.DatabaseUtils.ksAppPassword
+ import chat.simplex.common.views.helpers.DatabaseUtils.ksSelfDestructPassword
+ import chat.simplex.common.views.isValidDisplayName
+@@ -487,6 +488,7 @@
+ 
+   fun disableUnavailableLA() {
+     chatModel.controller.appPrefs.performLA.set(false)
++    ciszaGuardDisarmOnLockChange()
+     chatModel.showAuthScreen.value = false
+     currentLAMode.set(LAMode.default)
+     laUnavailableInstructionAlert()
+@@ -518,6 +520,7 @@
+               authenticate(generalGetString(MR.strings.auth_enable_simplex_lock), promptSubtitle = "", usingLAMode = toLAMode, oneTime = true) { laResult ->
+                 when (laResult) {
+                   LAResult.Success -> {
++                    ciszaGuardDisarmOnLockChange()
+                     currentLAMode.set(toLAMode)
+                     ksAppPassword.remove()
+                     resetSelfDestruct()
+@@ -652,6 +655,7 @@
+             }
+           }
+         } else {
++          ciszaGuardDisarmOnLockChange()
+           setPerformLA(false)
+         }
+       }
+--- a/apps/multiplatform/common/src/commonMain/resources/MR/base/strings.xml
++++ b/apps/multiplatform/common/src/commonMain/resources/MR/base/strings.xml
+@@ -1,5 +1,5 @@
+ <resources>
+-  <string name="app_name">SimpleX</string>
++  <string name="app_name">CISZA Ω</string>
+ 
+   <string name="thousand_abbreviation">k</string>
+ 
+@@ -3207,4 +3207,15 @@
+   <string name="badge_unverified_desc">This badge could not be verified and may not be genuine.</string>
+   <string name="badge_unknown_key_title">Badge cannot be verified</string>
+   <string name="badge_unknown_key_desc">The badge is signed with a key that this version of the app does not recognize. Update the app to verify this badge.</string>
++
++  <!-- CISZA Omega: opt-in Android protection -->
++  <string name="cisza_guard_title">CISZA Ω — three-attempt data protection</string>
++  <string name="cisza_guard_description">Optional. After three consecutive incorrect app passcodes, Android is asked to clear this app’s private data. Correct passcodes reset the counter. External backups and copies held by other parties are unaffected.</string>
++  <string name="cisza_guard_confirm_title">Enable irreversible data removal?</string>
++  <string name="cisza_guard_confirm_body">If you enter an incorrect app passcode three times in a row, CISZA Ω will request Android to erase its private app data, including messages and keys. This may be irreversible. Make an independent backup first. A correct third attempt is accepted. This feature is OFF by default.</string>
++  <string name="cisza_guard_confirm_button">I understand — enable</string>
++  <string name="cisza_guard_require_pin">To use this protection, first enable the app lock and choose the app passcode mode. This feature does not apply to biometric/device unlock.</string>
++  <string name="cisza_guard_auth_title">Confirm app passcode</string>
++  <string name="cisza_guard_locked">Security state is missing, damaged or locked. Authentication is blocked. Do not assume that data has been erased.</string>
++  <string name="cisza_guard_erase_requested">The failure limit was reached. Android private-data removal was requested; completion cannot be confirmed in this session.</string>
+ </resources>--- a/apps/multiplatform/common/src/commonMain/resources/MR/pl/strings.xml
++++ b/apps/multiplatform/common/src/commonMain/resources/MR/pl/strings.xml
+@@ -28,7 +28,7 @@
+     <string name="trying_to_connect_to_server_to_receive_messages">Próba połączenia z serwerem, który służył do odbierania wiadomości z tego połączenia.</string>
+     <string name="error_connecting_to_server_to_receive_messages">Próbowanie połączenia z serwerem używanym do odbierania wiadomości od tego kontaktu (błąd: %1$s).</string>
+     <string name="unknown_message_format">nieznany format wiadomości</string>
+-    <string name="app_name">SimpleX</string>
++    <string name="app_name">CISZA Ω</string>
+     <string name="sender_you_pronoun">Ty</string>
+     <string name="connected_to_server_to_receive_messages_from_contact">Jesteś połączony z serwerem, który służył do odbierania wiadomości z tego połączenia.</string>
+     <string name="profile_will_be_sent_to_contact_sending_link">Twój profil zostanie wysłany do kontaktu, od którego otrzymałeś ten link.</string>
+@@ -2562,4 +2562,395 @@
+     <string name="why_built_p6">Najstarsza ludzka wolność - możliwość rozmowy z inną osobą bez bycia obserwowanym - opiera się na infrastrukturze, która nie może jej zdradzić.</string>
+     <string name="why_built_p7">Ponieważ zniszczyliśmy moc pozwalającą poznać, kim jesteś. Więc twoja moc nigdy nie będzie Ci odebrana.</string>
+     <string name="why_built_tagline">Ciesz się swobodą w swojej sieci.</string>
++
++  <!-- CISZA Omega: opt-in Android protection -->
++  <string name="cisza_guard_title">CISZA Ω — ochrona po trzech błędach</string>
++  <string name="cisza_guard_description">Funkcja opcjonalna. Po trzech kolejnych błędnych kodach PIN Android otrzyma żądanie wyczyszczenia prywatnych danych aplikacji. Poprawny PIN resetuje licznik. Kopie zapasowe i dane odbiorców pozostają poza kontrolą aplikacji.</string>
++  <string name="cisza_guard_confirm_title">Włączyć nieodwracalne usuwanie danych?</string>
++  <string name="cisza_guard_confirm_body">Po trzech kolejnych błędnych kodach PIN aplikacja CISZA Ω zleci Androidowi wyczyszczenie swoich prywatnych danych, w tym wiadomości i kluczy. Utrata danych może być nieodwracalna. Najpierw wykonaj niezależną kopię zapasową. Poprawny PIN przy trzeciej próbie zostanie zaakceptowany. Domyślnie funkcja jest wyłączona.</string>
++  <string name="cisza_guard_confirm_button">Rozumiem — włącz</string>
++  <string name="cisza_guard_require_pin">Najpierw włącz blokadę aplikacji i wybierz tryb PIN. Funkcja nie obejmuje odblokowania biometrycznego ani systemowego.</string>
++  <string name="cisza_guard_auth_title">Potwierdź kod PIN aplikacji</string>
++  <string name="cisza_guard_locked">Stan zabezpieczenia jest niekompletny, uszkodzony albo zablokowany. Uwierzytelnianie zostało zablokowane. Nie oznacza to potwierdzenia usunięcia danych.</string>
++  <string name="cisza_guard_erase_requested">Przekroczono limit błędnych prób. Zlecono Androidowi usunięcie prywatnych danych aplikacji; nie można potwierdzić zakończenia operacji w tej sesji.</string>
++
++  <!-- CISZA Omega: uzupełnienie brakujących tłumaczeń SimpleX 7.0.2 -->
++  <string name="connect_plan_join_name">Dołącz do kanału %s</string>
++  <string name="connect_plan_connect_to_name">Połącz z %s</string>
++  <string name="another_instance_title">Aplikacja jest już uruchomiona</string>
++  <string name="another_instance_not_responding">Inna instancja aplikacji może nadal działać lub nie została prawidłowo zamknięta. Uruchomić mimo to?</string>
++  <string name="voice_recording_not_supported">Nagrywanie głosu nie jest obsługiwane na tej platformie</string>
++  <string name="e2ee_info_no_e2ee">Wiadomości na tym kanale &lt;b&gt;nie są szyfrowane metodą end-to-end&lt;/b&gt;. Przekaźniki czatu mogą odczytywać ich treść.</string>
++  <string name="no_chat_relays_enabled">Nie włączono przekaźników czatu.</string>
++  <string name="no_names_servers_enabled">Brak serwerów rozpoznających nazwy.</string>
++  <string name="server_warning">Ostrzeżenie serwera</string>
++  <string name="unsupported_channel_name">Nieobsługiwana nazwa kanału</string>
++  <string name="unsupported_contact_name">Nieobsługiwana nazwa kontaktu</string>
++  <string name="channel_name_requires_newer_app_version">Łączenie za pomocą nazwy kanału wymaga nowszej wersji aplikacji.</string>
++  <string name="contact_name_requires_newer_app_version">Łączenie za pomocą nazwy kontaktu wymaga nowszej wersji aplikacji.</string>
++  <string name="please_upgrade_the_app">Zaktualizuj aplikację.</string>
++  <string name="simplex_name_error">Błąd nazwy SimpleX</string>
++  <string name="simplex_name_no_servers_desc">Żaden z Twoich serwerów nie rozpoznaje nazw SimpleX. Skonfiguruj serwery lub użyj linku połączenia.</string>
++  <string name="simplex_name_server_no_resolver_desc">Serwer %1$s nie obsługuje rozpoznawania nazw. Skonfiguruj serwery lub użyj linku połączenia.</string>
++  <string name="simplex_name_not_found">Nie znaleziono nazwy</string>
++  <string name="simplex_name_not_found_desc">Ta nazwa SimpleX nie jest zarejestrowana. Sprawdź jej pisownię.</string>
++  <string name="simplex_name_resolver_error_desc">Błąd rozpoznawania nazwy: %1$s</string>
++  <string name="simplex_name_no_valid_link">Brak prawidłowego linku</string>
++  <string name="simplex_name_no_valid_link_desc">Nazwa SimpleX %1$s jest zarejestrowana, ale nie ma prawidłowego linku.</string>
++  <string name="simplex_name_unconfirmed">Nazwa niepotwierdzona</string>
++  <string name="simplex_name_unconfirmed_desc">Nazwa SimpleX %1$s jest zarejestrowana, ale nie dodano jej do profilu. Jeśli jesteś właścicielem, dodaj ją do adresu lub profilu kanału.</string>
++  <string name="channel_temporarily_unavailable">Kanał jest tymczasowo niedostępny</string>
++  <string name="channel_no_active_relays_try_later">Kanał nie ma aktywnych przekaźników. Spróbuj dołączyć później.</string>
++  <string name="app_update_required">Wymagana aktualizacja aplikacji</string>
++  <string name="group_link_requires_newer_version">Ta grupa wymaga nowszej wersji aplikacji. Zaktualizuj aplikację, aby dołączyć.</string>
++  <string name="error_deleting_message">Błąd podczas usuwania wiadomości</string>
++  <string name="save_simplex_name_question">Zapisać nazwę SimpleX?</string>
++  <string name="get_simplex_name_beta">Uzyskaj nazwę SimpleX (BETA)</string>
++  <string name="channel_simplex_name">Nazwa kanału SimpleX</string>
++  <string name="register_test_name">Jak zarejestrować nazwę testową</string>
++  <string name="simplex_name_sales">Sprzedaż nazw SimpleX rozpocznie się za</string>
++  <string name="until_register_simplex_domain">do możliwości zarejestrowania domeny SimpleX</string>
++  <string name="update_app_register_simplex_domain">Zaktualizuj aplikację, aby zarejestrować domenę SimpleX</string>
++  <string name="countdown_hrs_min_sec">%1$02d godz. %2$02d min %3$02d s</string>
++  <string name="simplex_name_sales_footer">Uczestnicy finansowania społecznościowego mogą zarezerwować nazwy przed rozpoczęciem sprzedaży:</string>
++  <string name="remove_name">Usuń nazwę</string>
++  <string name="from_history">Z historii</string>
++  <string name="talk_to_someone">Porozmawiaj z kimś</string>
++  <string name="let_someone_connect_to_you">Pozwól innym nawiązać z Tobą kontakt</string>
++  <string name="connect_via_link_or_qr_code">Połącz przez link lub kod QR</string>
++  <string name="connect_with_someone">Utwórz swój link</string>
++  <string name="invite_someone_privately">Zaproś kogoś prywatnie</string>
++  <string name="a_link_for_one_person">Link do jednorazowego połączenia dla jednej osoby</string>
++  <string name="create_your_public_address">Utwórz swój publiczny adres</string>
++  <string name="your_public_address">Twój publiczny adres</string>
++  <string name="for_anyone_to_reach_you">Aby każdy mógł się z Tobą skontaktować</string>
++  <string name="chat_list_channels">Kanały</string>
++  <string name="chat_banner_join_channel">Dotknij „Dołącz do kanału”</string>
++  <string name="chat_banner_your_channel">Twój kanał</string>
++  <string name="chat_banner_channel">Kanał</string>
++  <string name="share_channel">Udostępnij kanał…</string>
++  <string name="share_via_chat">Udostępnij przez czat</string>
++  <string name="tap_to_open">Dotknij, aby otworzyć</string>
++  <string name="chat_link_channel">Link do kanału</string>
++  <string name="chat_link_group">Link do grupy</string>
++  <string name="chat_link_business_address">Adres firmowy</string>
++  <string name="chat_link_contact_address">Adres kontaktowy</string>
++  <string name="chat_link_one_time">Link jednorazowy</string>
++  <string name="chat_link_from_owner">(od właściciela)</string>
++  <string name="error_sharing_channel">Błąd udostępniania kanału</string>
++  <string name="error_sharing_address">Błąd udostępniania adresu</string>
++  <string name="owner_verification_passed">Podpis linku został zweryfikowany.</string>
++  <string name="owner_verification_failed">⚠️ Weryfikacja podpisu nie powiodła się: %s.</string>
++  <string name="compose_view_join_channel">Dołącz do kanału</string>
++  <string name="compose_view_broadcast">Nadaj komunikat</string>
++  <string name="you_are_subscriber">jesteś subskrybentem</string>
++  <string name="channel_role_label">kanał</string>
++  <string name="cant_broadcast_message">nie można nadać komunikatu</string>
++  <string name="sign_message">Podpisz wiadomość</string>
++  <string name="sign_message_desc">Podpis potwierdza autorstwo wiadomości i umożliwia późniejszą weryfikację.</string>
++  <string name="info_row_signed">Podpisano</string>
++  <string name="info_row_signed_verified">Podpisano i zweryfikowano</string>
++  <string name="sign_messages">Podpisuj wiadomości</string>
++  <string name="require_message_signatures">Wymagaj podpisywania wiadomości.</string>
++  <string name="do_not_require_message_signatures">Nie wymagaj podpisywania wiadomości.</string>
++  <string name="message_signatures_are_required">Podpisy wiadomości są wymagane.</string>
++  <string name="message_signatures_are_not_required">Podpisy wiadomości nie są wymagane.</string>
++  <string name="show_signature">Pokaż podpis</string>
++  <string name="show_encryption">Pokaż szyfrowanie</string>
++  <string name="signature_missing_alert_title">Brak podpisu</string>
++  <string name="signature_missing_alert_desc">Na tym kanale wymagany jest podpis wiadomości, ale go brakuje.</string>
++  <string name="verify_simplex_name_action">Zweryfikuj nazwę</string>
++  <string name="verify_simplex_names">Weryfikuj nazwy SimpleX</string>
++  <string name="simplex_name_not_verified">Nazwa SimpleX nie została zweryfikowana</string>
++  <string name="simplex_name">Nazwa SimpleX</string>
++  <string name="your_simplex_name">Twoja nazwa SimpleX</string>
++  <string name="set_simplex_name">Ustaw nazwę SimpleX</string>
++  <string name="error_saving_simplex_name">Błąd zapisywania nazwy</string>
++  <string name="simplex_name_owner_no_channel_link">Nazwa SimpleX %1$s jest zarejestrowana bez linku kanału. Dodaj link do nazwy na stronie rejestracji.</string>
++  <string name="simplex_name_owner_no_address">Nazwa SimpleX %1$s jest zarejestrowana bez adresu SimpleX. Dodaj swój adres do nazwy na stronie rejestracji.</string>
++  <string name="set_user_simplex_name_footer">Pozwól innym łączyć się z Tobą przez nazwę przypisaną do Twojego adresu SimpleX.</string>
++  <string name="set_channel_simplex_name_footer">Pozwól innym dołączać przez nazwę przypisaną do linku tego kanału.</string>
++  <string name="to_verify_channel_member_key">Aby zweryfikować klucze tego subskrybenta, porównaj lub zeskanuj kod na obu urządzeniach.</string>
++  <string name="new_1_time_link">Nowy link jednorazowy</string>
++  <string name="onboarding_send_1_time_link">Wyślij link przez dowolny komunikator — połączenie będzie bezpieczne. Poproś odbiorcę o wklejenie go w SimpleX.</string>
++  <string name="onboarding_or_show_qr_code">Możesz też pokazać kod QR osobiście lub podczas rozmowy wideo.</string>
++  <string name="onboarding_post_address">Umieść ten adres w profilu społecznościowym, witrynie lub podpisie e-mail.</string>
++  <string name="onboarding_or_use_qr_code">Możesz też wydrukować lub udostępnić ten kod QR.</string>
++  <string name="profile_description__field">Opis</string>
++  <string name="add_description">Dodaj opis</string>
++  <string name="edit_description">Edytuj opis</string>
++  <string name="enter_description_optional">Wpisz opis (opcjonalnie)</string>
++  <string name="save_and_notify_channel_subscribers">Zapisz i powiadom subskrybentów kanału</string>
++  <string name="onboarding_be_free">Bądź wolny\nw swojej sieci</string>
++  <string name="onboarding_private_and_secure">Prywatne i bezpieczne wiadomości.</string>
++  <string name="onboarding_first_network">Pierwsza sieć, w której to Ty zarządzasz\nswoimi kontaktami i grupami.</string>
++  <string name="get_started">Rozpocznij</string>
++  <string name="why_simplex_is_built">Dlaczego powstał SimpleX.</string>
++  <string name="onboarding_your_profile">Twój profil</string>
++  <string name="onboarding_on_your_phone">Na Twoim telefonie, a nie na serwerach.</string>
++  <string name="onboarding_no_account">Bez konta, telefonu, e-maila i identyfikatora.\nNajwyższy poziom ochrony szyfrowaniem.</string>
++  <string name="enter_profile_name">Wpisz nazwę profilu…</string>
++  <string name="migrate">Przenieś dane</string>
++  <string name="onboarding_your_network">Twoja sieć</string>
++  <string name="onboarding_network_routers_cannot_know">Węzły sieci nie mogą ustalić,\nkto z kim rozmawia</string>
++  <string name="onboarding_configure_routers">Skonfiguruj węzły</string>
++  <string name="onboarding_configure_notifications">Skonfiguruj powiadomienia</string>
++  <string name="onboarding_network_commitments">Zobowiązania sieci</string>
++  <string name="open_external_link_title">Otworzyć link zewnętrzny?</string>
++  <string name="rcv_msg_error_dropped">odrzucono (%1$d prób)</string>
++  <string name="rcv_msg_error_parse">błąd: %s</string>
++  <string name="alert_title_msg_error">Błąd wiadomości</string>
++  <string name="alert_text_msg_reception_error">Aplikacja usunęła tę wiadomość po %1$d nieudanych próbach odbioru.</string>
++  <string name="settings_section_title_about">O aplikacji</string>
++  <string name="settings_section_title_contact">Kontakt</string>
++  <string name="settings_section_title_support_project">Wesprzyj projekt</string>
++  <string name="chat_data">Dane czatu</string>
++  <string name="help_and_support">Pomoc i wsparcie</string>
++  <string name="more_privacy">Więcej ustawień prywatności</string>
++  <string name="advanced_settings">Ustawienia zaawansowane</string>
++  <string name="settings_section_title_interface">Interfejs</string>
++  <string name="settings_section_title_language">JĘZYK</string>
++  <string name="one_hand_ui_bottom_bar">Pasek dolny</string>
++  <string name="one_hand_ui_top_bar">Pasek górny</string>
++  <string name="leave_channel_question">Opuścić kanał?</string>
++  <string name="you_will_stop_receiving_messages_from_this_channel_chat_history_will_be_preserved">Przestaniesz otrzymywać wiadomości z tego kanału. Historia czatu zostanie zachowana.</string>
++  <string name="rcv_channel_event_channel_deleted">usunięto kanał</string>
++  <string name="rcv_channel_event_updated_channel_profile">zaktualizowano profil kanału</string>
++  <string name="snd_channel_event_channel_profile_updated">profil kanału został zaktualizowany</string>
++  <string name="rcv_channel_events_count">%d zdarzeń kanału</string>
++  <string name="group_member_role_observer_channel">subskrybent</string>
++  <string name="group_member_role_member_channel">współtwórca</string>
++  <string name="group_member_role_relay">przekaźnik</string>
++  <string name="button_delete_channel">Usuń kanał</string>
++  <string name="button_cancel_and_delete_channel">Anuluj i usuń kanał</string>
++  <string name="delete_channel_question">Usunąć kanał?</string>
++  <string name="delete_channel_for_all_subscribers_cannot_undo_warning">Kanał zostanie usunięty u wszystkich subskrybentów — tej operacji nie można cofnąć!</string>
++  <string name="delete_channel_for_self_cannot_undo_warning">Kanał zostanie usunięty z Twojego urządzenia — tej operacji nie można cofnąć!</string>
++  <string name="button_leave_channel">Opuść kanał</string>
++  <string name="button_edit_channel_profile">Edytuj profil kanału</string>
++  <string name="channel_link">Link do kanału</string>
++  <string name="channel_webpage">Strona internetowa kanału</string>
++  <string name="group_webpage">Strona internetowa grupy</string>
++  <string name="advanced_options">Opcje zaawansowane</string>
++  <string name="web_page_url_placeholder">https://</string>
++  <string name="allow_anyone_to_embed">Zezwalaj każdemu na osadzanie</string>
++  <string name="enter_webpage_url">Wpisz adres URL strony</string>
++  <string name="webpage_url_footer">Adres będzie widoczny dla subskrybentów i umożliwi wczytanie podglądu.</string>
++  <string name="webpage_code">Kod strony internetowej</string>
++  <string name="webpage_code_footer">Dodaj ten kod do swojej strony. Wyświetli podgląd kanału lub grupy.</string>
++  <string name="copy_code">Kopiuj kod</string>
++  <string name="webpage_info">Utwórz stronę z podglądem kanału dla odwiedzających przed subskrypcją. Hostuj ją samodzielnie lub skorzystaj z dowolnego hostingu statycznego.</string>
++  <string name="relays_no_web_support">Używane przekaźniki czatu nie obsługują stron internetowych.</string>
++  <string name="embed_any_webpage_can_show">Dowolna strona może wyświetlić podgląd.</string>
++  <string name="embed_only_your_page">Tylko wskazana wyżej strona może wyświetlić podgląd.</string>
++  <string name="you_can_share_channel_link_anybody_will_be_able_to_connect">Możesz udostępnić link lub kod QR — każdy będzie mógł dołączyć do kanału.</string>
++  <string name="only_channel_owners_can_change_prefs">Tylko właściciele kanału mogą zmieniać jego ustawienia.</string>
++  <string name="action_button_channel_link">Link</string>
++  <string name="button_channel_members">Członkowie kanału</string>
++  <string name="button_channel_relays">Przekaźniki czatu</string>
++  <string name="info_row_file_servers">Serwery plików</string>
++  <string name="share_text_file_servers">Serwery plików: %s</string>
++  <string name="button_remove_subscriber_question">Usunąć subskrybenta?</string>
++  <string name="subscriber_will_be_removed_from_channel_cannot_be_undone">Subskrybent zostanie usunięty z kanału — tej operacji nie można cofnąć!</string>
++  <string name="member_role_will_be_changed_with_notification_channel">Rola zostanie zmieniona na „%s”. Wszyscy na kanale otrzymają powiadomienie.</string>
++  <string name="channel_full_name_field">Pełna nazwa kanału:</string>
++  <string name="channel_profile_is_stored_on_subscribers_devices">Profil kanału jest przechowywany na urządzeniach subskrybentów i w przekaźnikach czatu.</string>
++  <string name="save_channel_profile">Zapisz profil kanału</string>
++  <string name="error_saving_channel_profile">Błąd zapisywania profilu kanału</string>
++  <string name="operator_use_for_names">Do rozpoznawania nazw</string>
++  <string name="channel_preferences">Ustawienia kanału</string>
++  <string name="chat_with_admins">Czat z administratorami</string>
++  <string name="allow_chat_with_admins">Zezwalaj członkom na rozmowy z administratorami.</string>
++  <string name="prohibit_chat_with_admins">Zabroń rozmów z administratorami.</string>
++  <string name="members_can_chat_with_admins">Członkowie mogą rozmawiać z administratorami.</string>
++  <string name="chat_with_admins_is_prohibited">Rozmowy z administratorami są zabronione.</string>
++  <string name="chat_with_admins_relay_note">Rozmowy z administratorami na kanałach publicznych nie są szyfrowane end-to-end — korzystaj wyłącznie z zaufanych przekaźników.</string>
++  <string name="enable_chats_with_admins_question">Włączyć rozmowy z administratorami?</string>
++  <string name="enable_chats_with_admins">Włącz</string>
++  <string name="group_reports_subscriber_reports">Zgłoszenia subskrybentów</string>
++  <string name="allow_direct_messages_channel">Zezwalaj na wysyłanie wiadomości prywatnych do subskrybentów.</string>
++  <string name="prohibit_direct_messages_channel">Zabroń wysyłania wiadomości prywatnych do subskrybentów.</string>
++  <string name="enable_sending_recent_history_channel">Wysyłaj do 100 ostatnich wiadomości nowym subskrybentom.</string>
++  <string name="disable_sending_recent_history_channel">Nie wysyłaj historii nowym subskrybentom.</string>
++  <string name="group_members_can_send_disappearing_channel">Subskrybenci mogą wysyłać znikające wiadomości.</string>
++  <string name="group_members_can_send_dms_channel">Subskrybenci mogą wysyłać wiadomości prywatne.</string>
++  <string name="direct_messages_are_prohibited_channel">Wiadomości prywatne między subskrybentami są zabronione.</string>
++  <string name="group_members_can_delete_channel">Subskrybenci mogą bezpowrotnie usuwać wysłane wiadomości (24 godziny).</string>
++  <string name="group_members_can_add_message_reactions_channel">Subskrybenci mogą dodawać reakcje na wiadomości.</string>
++  <string name="group_members_can_send_voice_channel">Subskrybenci mogą wysyłać wiadomości głosowe.</string>
++  <string name="group_members_can_send_files_channel">Subskrybenci mogą wysyłać pliki i multimedia.</string>
++  <string name="group_members_can_send_simplex_links_channel">Subskrybenci mogą wysyłać linki SimpleX.</string>
++  <string name="group_members_can_send_reports_channel">Subskrybenci mogą zgłaszać wiadomości moderatorom.</string>
++  <string name="recent_history_is_sent_to_new_members_channel">Nowi subskrybenci otrzymują do 100 ostatnich wiadomości.</string>
++  <string name="recent_history_is_not_sent_to_new_members_channel">Nowi subskrybenci nie otrzymują historii.</string>
++  <string name="allow_chat_with_admins_channel">Zezwalaj subskrybentom na rozmowy z administratorami.</string>
++  <string name="members_can_chat_with_admins_channel">Subskrybenci mogą rozmawiać z administratorami.</string>
++  <string name="support_chats_disabled">Rozmowy z członkami są wyłączone</string>
++  <string name="v6_5_public_channels">Kanały publiczne — mów swobodnie 🚀</string>
++  <string name="v6_5_reliability">Niezawodność: wiele przekaźników na kanał.</string>
++  <string name="v6_5_ownership">Własność: możesz uruchamiać własne przekaźniki.</string>
++  <string name="v6_5_security">Bezpieczeństwo: właściciele przechowują klucze kanału.</string>
++  <string name="v6_5_privacy">Prywatność: dla właścicieli i subskrybentów.</string>
++  <string name="v6_5_invite_friends">Łatwiejsze zapraszanie znajomych 👋</string>
++  <string name="v6_5_invite_friends_descr">Uprościliśmy nawiązywanie połączeń dla nowych użytkowników.</string>
++  <string name="v6_5_safe_web_links">Bezpieczne linki internetowe</string>
++  <string name="v6_5_safe_web_links_descr">- podgląd linków tylko za zgodą.\n- korzystanie z proxy SOCKS, jeśli jest włączone.\n- ochrona przed phishingiem przez hiperłącza.\n- usuwanie parametrów śledzących z linków.</string>
++  <string name="v6_5_non_profit_governance">Zarządzanie przez organizację non-profit</string>
++  <string name="v6_5_non_profit_governance_descr">Aby sieć SimpleX mogła działać przez lata.</string>
++  <string name="v7_0_invest">Możesz teraz inwestować w SimpleX Chat! 🚀</string>
++  <string name="v7_0_invest_descr">Finansowanie społecznościowe na Wefunder.</string>
++  <string name="v7_0_crowdfunding">Finansowanie społecznościowe na Wefunder</string>
++  <string name="v7_0_invest_learn_more">Dowiedz się więcej na Wefunder</string>
++  <string name="v7_0_simplex_names">Publiczne nazwy SimpleX (BETA)</string>
++  <string name="v7_0_simplex_names_descr">Publiczne nazwy kanałów i firm.</string>
++  <string name="v7_0_channels">Ulepszone kanały 📢</string>
++  <string name="v7_0_channels_previews">Twórz podglądy internetowe.</string>
++  <string name="v7_0_channels_relays">Zarządzaj swoimi przekaźnikami.</string>
++  <string name="v7_0_channels_contributors">Dodawaj współtwórców.</string>
++  <string name="v7_0_channels_wider_messages">Łatwiejsze czytanie wiadomości.</string>
++  <string name="channel_members_title_subscribers">Subskrybenci</string>
++  <string name="channel_members_section_owners">Właściciele i współtwórcy</string>
++  <string name="channel_subscriber_count_singular">%1$d subskrybent</string>
++  <string name="channel_subscriber_count_plural">%1$d subskrybentów</string>
++  <string name="channel_owner_count_singular">%1$d właściciel</string>
++  <string name="channel_owner_count_plural">%1$d właścicieli</string>
++  <string name="channel_owners_contributors_count">%1$d właścicieli i współtwórców</string>
++  <string name="channel_member_you">Ty</string>
++  <string name="chat_relay">Przekaźnik czatu</string>
++  <string name="new_chat_relay">Nowy przekaźnik czatu</string>
++  <string name="preset_relay_name">Domyślna nazwa przekaźnika</string>
++  <string name="preset_relay_address">Domyślny adres przekaźnika</string>
++  <string name="your_relay_name">Nazwa Twojego przekaźnika</string>
++  <string name="your_relay_address">Adres Twojego przekaźnika</string>
++  <string name="enter_relay_name">Wpisz nazwę przekaźnika…</string>
++  <string name="use_relay">Użyj przekaźnika</string>
++  <string name="test_relay">Przetestuj przekaźnik</string>
++  <string name="use_for_new_channels">Używaj dla nowych kanałów</string>
++  <string name="delete_relay">Usuń przekaźnik</string>
++  <string name="test_relay_to_retrieve_name">&lt;b&gt;Przetestuj przekaźnik&lt;/b&gt;, aby pobrać jego nazwę.</string>
++  <string name="relay_test_failed_alert">Test przekaźnika nie powiódł się!</string>
++  <string name="relay_test_step_get_link">Pobierz link</string>
++  <string name="relay_test_step_decode_link">Odczytaj link</string>
++  <string name="relay_test_step_connect">Połącz</string>
++  <string name="relay_test_step_wait_response">Czekaj na odpowiedź</string>
++  <string name="relay_test_step_verify">Zweryfikuj</string>
++  <string name="error_relay_test_failed_at_step">Test nie powiódł się na etapie %s.</string>
++  <string name="error_relay_test_server_auth">Serwer wymaga autoryzacji do połączenia z przekaźnikiem. Sprawdź hasło.</string>
++  <string name="invalid_relay_name">Nieprawidłowa nazwa przekaźnika!</string>
++  <string name="check_relay_name">Sprawdź nazwę przekaźnika i spróbuj ponownie.</string>
++  <string name="invalid_relay_address">Nieprawidłowy adres przekaźnika!</string>
++  <string name="check_relay_address">Sprawdź adres przekaźnika i spróbuj ponownie.</string>
++  <string name="error_adding_relay">Błąd dodawania przekaźnika</string>
++  <string name="chat_relays">Przekaźniki czatu</string>
++  <string name="chat_relays_forward_messages_in_channels">Przekaźniki czatu przekazują wiadomości w utworzonych przez Ciebie kanałach.</string>
++  <string name="channel_relays_title">Przekaźniki czatu</string>
++  <string name="no_chat_relays">Brak przekaźników czatu</string>
++  <string name="chat_relays_forward_messages">Przekaźniki przekazują wiadomości subskrybentom kanału.</string>
++  <string name="relay_conn_status_connected">połączony</string>
++  <string name="relay_conn_status_connecting">łączenie</string>
++  <string name="relay_conn_status_deleted">usunięty</string>
++  <string name="relay_conn_status_failed">niepowodzenie</string>
++  <string name="relay_conn_status_removed_by_operator">usunięty przez operatora</string>
++  <string name="relay_conn_status_removed">usunięty</string>
++  <string name="relay_status_new">nowy</string>
++  <string name="relay_status_invited">zaproszony</string>
++  <string name="relay_status_accepted">zaakceptowany</string>
++  <string name="relay_status_acknowledged_roster">potwierdzono listę członków</string>
++  <string name="relay_status_active">aktywny</string>
++  <string name="relay_status_inactive">nieaktywny</string>
++  <string name="relay_status_rejected">odrzucony</string>
++  <string name="member_info_status">Stan</string>
++  <string name="member_info_relay_status_rejected_by_operator">odrzucony przez operatora przekaźnika</string>
++  <string name="relay_bar_all_relays_removed">Usunięto wszystkie przekaźniki</string>
++  <string name="relay_bar_all_relays_failed">Wszystkie przekaźniki zgłosiły błąd</string>
++  <string name="relay_bar_no_active_relays">Brak aktywnych przekaźników</string>
++  <string name="relay_bar_relays_removed">Usunięto %1$d przekaźników</string>
++  <string name="relay_bar_relays_failed">Błąd %1$d przekaźników</string>
++  <string name="relay_bar_relays_not_active">%1$d nieaktywnych przekaźników</string>
++  <string name="relay_bar_active_with_failures">Aktywne: %1$d/%2$d przekaźników, błędy: %3$d</string>
++  <string name="relay_bar_active_with_removed">Aktywne: %1$d/%2$d przekaźników, usunięte: %3$d</string>
++  <string name="relay_bar_active_with_errors">Aktywne: %1$d/%2$d przekaźników, błędy: %3$d</string>
++  <string name="relay_bar_active">Aktywne przekaźniki: %1$d/%2$d</string>
++  <string name="relay_bar_connected_with_errors">Połączone: %1$d/%2$d przekaźników, błędy: %3$d</string>
++  <string name="relay_bar_connected_with_failures">Połączone: %1$d/%2$d przekaźników, niepowodzenia: %3$d</string>
++  <string name="relay_bar_connected_with_removed">Połączone: %1$d/%2$d przekaźników, usunięte: %3$d</string>
++  <string name="relay_bar_connected">Połączone przekaźniki: %1$d/%2$d</string>
++  <string name="relay_bar_no_relays">Brak przekaźników</string>
++  <string name="relay_bar_owner_no_delivery">Dodaj przekaźniki, aby przywrócić dostarczanie wiadomości.</string>
++  <string name="relay_bar_subscriber_waiting">Oczekiwanie, aż właściciel kanału doda przekaźniki.</string>
++  <string name="member_info_section_title_relay">Przekaźnik</string>
++  <string name="member_info_section_title_owner">Właściciel</string>
++  <string name="member_info_section_title_subscriber">Subskrybent</string>
++  <string name="info_row_channel">Kanał</string>
++  <string name="info_row_relay_link">Link do przekaźnika</string>
++  <string name="info_row_relay_address">Adres przekaźnika</string>
++  <string name="via_relay_hostname">przez %1$s</string>
++  <string name="share_relay_address">Udostępnij adres przekaźnika</string>
++  <string name="relay_section_footer_owner">Subskrybenci używają linku przekaźnika, aby dołączyć do kanału.\nAdres przekaźnika służył do jego skonfigurowania dla kanału.</string>
++  <string name="relay_section_footer_subscriber">Połączono z kanałem przez ten link przekaźnika.</string>
++  <string name="button_remove_subscriber">Usuń subskrybenta</string>
++  <string name="button_remove_relay">Usuń przekaźnik</string>
++  <string name="button_remove_relay_question">Usunąć przekaźnik?</string>
++  <string name="relay_will_be_removed_from_channel">Przekaźnik zostanie usunięty z kanału — tej operacji nie można cofnąć!</string>
++  <string name="last_active_relay_warning">To ostatni aktywny przekaźnik. Jego usunięcie uniemożliwi dostarczanie wiadomości subskrybentom.</string>
++  <string name="block_subscriber_for_all_question">Zablokować subskrybenta dla wszystkich?</string>
++  <string name="create_channel_title">Utwórz kanał publiczny</string>
++  <string name="create_channel_button">Utwórz kanał publiczny</string>
++  <string name="channel_display_name_field">Nazwa kanału</string>
++  <string name="creating_channel">Tworzenie kanału</string>
++  <string name="error_creating_channel">Błąd tworzenia kanału</string>
++  <string name="relay_results">Wyniki przekaźników:</string>
++  <string name="connection_reached_limit_of_undelivered_messages">Połączenie osiągnęło limit niedostarczonych wiadomości</string>
++  <string name="network_error">Błąd sieci</string>
++  <string name="error_prefix">Błąd</string>
++  <string name="cancel_creating_channel_question">Anulować tworzenie kanału?</string>
++  <string name="cancel_channel_alert_msg">Twój nowy kanał %1$s połączono z %2$d z %3$d przekaźników.\nJeśli anulujesz, kanał zostanie usunięty. Możesz utworzyć go ponownie.</string>
++  <string name="enable_at_least_one_chat_relay">Włącz co najmniej jeden przekaźnik czatu, aby utworzyć kanał.</string>
++  <string name="your_profile_shared_with_channel_relays">Twój profil %1$s zostanie udostępniony przekaźnikom kanału i subskrybentom.\nPrzekaźniki mogą odczytywać wiadomości kanału.</string>
++  <string name="configure_relays">Skonfiguruj przekaźniki</string>
++  <string name="relay_status_failed">niepowodzenie</string>
++  <string name="add_button">Dodaj</string>
++  <string name="add_relay_button">Dodaj przekaźnik</string>
++  <string name="add_relays_title">Dodaj przekaźniki</string>
++  <string name="no_available_relays">Brak dostępnych przekaźników</string>
++  <string name="error_adding_relays">Błąd dodawania przekaźników</string>
++  <string name="relays_added_format">Dodane przekaźniki: %1$s.</string>
++  <string name="select_relays">Wybierz przekaźniki</string>
++  <string name="no_relays_selected">Nie wybrano przekaźników</string>
++  <string name="num_relays_selected">Wybrano %d przekaźników</string>
++  <string name="relay_connection_failed">Połączenie z przekaźnikiem nie powiodło się</string>
++  <string name="not_all_relays_connected">Nie wszystkie przekaźniki są połączone</string>
++  <string name="wait_verb">Czekaj</string>
++  <string name="channel_will_start_with_relays">Kanał rozpocznie działanie z %1$d z %2$d przekaźników. Kontynuować?</string>
++  <string name="relay_address_alert_title">Adres przekaźnika</string>
++  <string name="relay_address_alert_message">To adres przekaźnika czatu — nie służy do nawiązywania połączeń.</string>
++  <string name="connect_plan_open_channel">Otwórz kanał</string>
++  <string name="connect_plan_open_new_channel">Otwórz nowy kanał</string>
++  <string name="connect_plan_this_is_your_link_for_channel">Twój kanał</string>
++  <string name="connect_plan_this_is_your_link_for_channel_vName">To Twój link do kanału &lt;b&gt;%1$s&lt;/b&gt;!</string>
++  <string name="error_opening_channel">Błąd otwierania kanału</string>
++  <string name="unblock_subscriber_for_all_question">Odblokować subskrybenta dla wszystkich?</string>
++  <string name="link_previews_alert_title">Włączyć podgląd linków?</string>
++  <string name="link_previews_alert_desc">Wysyłanie podglądu linku może ujawnić Twój adres IP stronie internetowej. Możesz później zmienić to w ustawieniach prywatności.</string>
++  <string name="link_previews_alert_desc_socks">Podgląd linku zostanie pobrany przez proxy SOCKS. Zapytanie DNS może jednak nadal zostać wykonane lokalnie przez Twój resolver.</string>
++  <string name="link_previews_alert_enable">Włącz</string>
++  <string name="link_previews_alert_disable">Wyłącz</string>
++  <string name="close_behavior_dialog_title">Minimalizować do zasobnika?</string>
++  <string name="close_behavior_dialog_text">Jeśli wybierzesz zamknięcie, wiadomości nie będą odbierane.\nMożesz to później zmienić w ustawieniach wyglądu.</string>
++  <string name="close_behavior_dialog_close">Zamknij aplikację</string>
++  <string name="close_behavior_dialog_minimize">Minimalizuj do zasobnika</string>
++  <string name="tray_show">Pokaż SimpleX</string>
++  <string name="tray_quit">Zamknij SimpleX</string>
++  <string name="tray_tooltip">SimpleX</string>
++  <string name="tray_tooltip_unread">SimpleX — %d nieprzeczytanych</string>
++  <string name="appearance_minimize_to_tray">Zamykaj do zasobnika</string>
++  <string name="appearance_minimize_to_tray_desc">Działa w tle, aby odbierać wiadomości</string>
++  <string name="badge_supports_simplex">%s wspiera SimpleX Chat.</string>
++  <string name="badge_supported_simplex">%1$s wsparł SimpleX Chat. Odznaka wygasła %2$s.</string>
++  <string name="badge_support_from_v7">Możesz wspierać SimpleX od wersji 7 aplikacji.</string>
++  <string name="badge_invested">%s zainwestował w finansowanie społecznościowe SimpleX Chat.</string>
++  <string name="badge_unverified_title">Niezweryfikowana odznaka</string>
++  <string name="badge_unverified_desc">Nie udało się zweryfikować tej odznaki. Może być nieautentyczna.</string>
++  <string name="badge_unknown_key_title">Nie można zweryfikować odznaki</string>
++  <string name="badge_unknown_key_desc">Odznaka została podpisana kluczem, którego ta wersja aplikacji nie rozpoznaje. Zaktualizuj aplikację, aby ją zweryfikować.</string>
+ </resources>
+--- a/apps/multiplatform/gradle.properties
++++ b/apps/multiplatform/gradle.properties
+@@ -24,8 +24,8 @@
+ kotlin.mpp.androidSourceSetLayoutVersion=2
+ kotlin.jvm.target=11
+ 
+-android.version_name=7.0.2
+-android.version_code=375
++android.version_name=0.1.0
++android.version_code=1
+ 
+ desktop.version_name=7.0.2
+ desktop.version_code=159

@@ -1,0 +1,16 @@
+PASS disabled does not mutate or erase
+PASS two incorrect attempts consume durable slots
+PASS third attempt with correct credential never wipes
+PASS third wrong credential requests wipe exactly once
+PASS crash during verifier consumes slot
+PASS failed persistence prevents verification
+PASS failed wipe remains locked
+PASS armed state cannot reset on incorrect passcode
+PASS terminal state cannot be armed again
+PASS successful credential resets after two failures
+PASS verifier is invoked once per permitted attempt
+PASS failed reset cannot return success
+PASS concurrent incorrect attempts erase at most once
+PASS corrupted storage never authenticates
+PASS terminal state cannot be disarmed
+PASS arm and disarm are explicit

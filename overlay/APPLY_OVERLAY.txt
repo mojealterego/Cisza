@@ -1,0 +1,6 @@
+CISZA OMEGA 0.1.0 - Overlay for the user-provided simplex-chat-stable.zip
+1. Extract the original SimpleX Chat 7.0.2 archive.
+2. Copy all files from CISZA_OMEGA_OVERLAY/ into simplex-chat-stable/, overwriting existing files.
+3. Preserve the original LICENSE and notices.
+4. Read CISZA_OMEGA_README.md and docs/CISZA_BUILD.md.
+5. No installable APK is included.

@@ -1,0 +1,11 @@
+PASS all base translation keys have Polish equivalents
+PASS no unexpected Polish keys
+PASS brand name
+PASS all positional format placeholders preserved
+PASS distinct Android application ID
+PASS Android backup disabled
+PASS native hardening flags
+PASS license retained
+PASS guard policy and Keystore implementation
+PASS platform authentication integrated
+Polish localization: 2917/2917; placeholder mismatches: 0
